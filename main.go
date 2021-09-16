@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/applicationautoscaling"
 	"github.com/aws/aws-sdk-go/service/ecs"
+	"github.com/aws/aws-sdk-go/service/eventbridge"
 	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/spf13/cobra"
 )
@@ -469,6 +470,70 @@ func main() {
 		},
 	}
 
+	var cmdListCrons = &cobra.Command{
+		Use:   "list-crons [cluster_name]",
+		Short: "List all crons (scheduled tasks) in ECS cluster",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+
+			resultCluster, errCluster := svc.DescribeClusters(
+				&ecs.DescribeClustersInput{
+					Clusters: []*string{
+						aws.String(args[0]),
+					},
+				},
+			)
+			if errCluster != nil {
+				fmt.Println(errCluster)
+				os.Exit(1)
+			}
+			if len(resultCluster.Failures) > 0 {
+				fmt.Println("Cluster not found")
+				os.Exit(1)
+			}
+
+			eb := eventbridge.New(sess)
+
+			var rules []*string
+
+			result, err := eb.ListRuleNamesByTarget(
+				&eventbridge.ListRuleNamesByTargetInput{
+					TargetArn: resultCluster.Clusters[0].ClusterArn,
+					Limit:     aws.Int64(100),
+				},
+			)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+
+			rules = append(rules, result.RuleNames...)
+
+			for result.NextToken != nil {
+				result, err = eb.ListRuleNamesByTarget(
+					&eventbridge.ListRuleNamesByTargetInput{
+						NextToken: result.NextToken,
+						TargetArn: resultCluster.Clusters[0].ClusterArn,
+						Limit:     aws.Int64(100),
+					},
+				)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+				rules = append(rules, result.RuleNames...)
+			}
+
+			fmt.Println("Cluster:               " + args[0])
+			fmt.Printf("Crons/Scheduled Tasks: %d\n", len(rules))
+			fmt.Println("---")
+
+			for _, rule := range rules {
+				fmt.Printf("  %s\n", *rule)
+			}
+		},
+	}
+
 	var cmdVersion = &cobra.Command{
 		Use:   "version",
 		Short: "Print the version number of svc",
@@ -482,6 +547,6 @@ func main() {
 		Use:   "svc",
 		Short: "ECS Service Utility v" + version,
 	}
-	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdVersion)
+	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdVersion)
 	rootCmd.Execute()
 }
