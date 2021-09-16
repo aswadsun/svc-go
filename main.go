@@ -183,6 +183,31 @@ func main() {
 		},
 	}
 
+	var cmdRestart = &cobra.Command{
+		Use:   "restart [cluster_name] [service_name]",
+		Short: "Restart ECS Service",
+		Args:  cobra.ExactArgs(2),
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println("Restart ECS Service")
+			fmt.Println("Cluster: " + args[0])
+			fmt.Println("Service: " + args[1])
+
+			_, err := svc.UpdateService(
+				&ecs.UpdateServiceInput{
+					Cluster:            aws.String(args[0]),
+					Service:            aws.String(args[1]),
+					ForceNewDeployment: aws.Bool(true),
+				},
+			)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Successfully submitted command to restart ECS service ...\n\n")
+		},
+	}
+
 	var cmdStart = &cobra.Command{
 		Use:   "start [cluster_name] [service_name]",
 		Short: "Start ECS Service",
@@ -457,6 +482,6 @@ func main() {
 		Use:   "svc",
 		Short: "ECS Service Utility v" + version,
 	}
-	rootCmd.AddCommand(cmdList, cmdListCluster, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdVersion)
+	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdVersion)
 	rootCmd.Execute()
 }
