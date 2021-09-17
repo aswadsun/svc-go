@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.2"
+const version = "0.0.3"
 
 func parseName(arn string) string {
 	re := regexp.MustCompile(`(?:.+\/)(.+$)`)
@@ -534,6 +534,63 @@ func main() {
 		},
 	}
 
+	var cmdInfoCron = &cobra.Command{
+		Use:   "info-cron [cron_name]",
+		Short: "Show information of specified cron",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			eb := eventbridge.New(sess)
+
+			result, err := eb.DescribeRule(
+				&eventbridge.DescribeRuleInput{
+					Name: aws.String(args[0]),
+				},
+			)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+			fmt.Println("Cron/Scheduled Task")
+			if result.ScheduleExpression != nil {
+				fmt.Printf("Name:               %s\n", *result.Name)
+				fmt.Printf("Event Bus:          %s\n", *result.EventBusName)
+				fmt.Printf("State:              %s\n", *result.State)
+				fmt.Printf("ScheduleExpression: %s\n", *result.ScheduleExpression)
+			}
+			if result.EventPattern != nil {
+				fmt.Printf("Name:         %s\n", *result.Name)
+				fmt.Printf("Event Bus:    %s\n", *result.EventBusName)
+				fmt.Printf("State:        %s\n", *result.State)
+				fmt.Printf("EventPattern: %s\n", *result.EventPattern)
+			}
+
+			resultTarget, errTarget := eb.ListTargetsByRule(
+				&eventbridge.ListTargetsByRuleInput{
+					EventBusName: result.EventBusName,
+					Limit:        aws.Int64(100),
+					Rule:         result.Name,
+				},
+			)
+			if errTarget != nil {
+				fmt.Println(errTarget)
+				os.Exit(1)
+			}
+			fmt.Printf("Target(s):\n")
+			fmt.Printf("---\n")
+			for _, target := range resultTarget.Targets {
+				if target.EcsParameters != nil {
+					fmt.Printf("- Id:              %s\n", *target.Id)
+					fmt.Printf("  ARN:             %s\n", *target.Arn)
+					fmt.Printf("  Task Definition: %s\n", parseName(*target.EcsParameters.TaskDefinitionArn))
+				} else {
+					fmt.Printf("- Id:  %s\n", *target.Id)
+					fmt.Printf("  ARN: %s\n", *target.Arn)
+				}
+				fmt.Println()
+			}
+		},
+	}
+
 	var cmdVersion = &cobra.Command{
 		Use:   "version",
 		Short: "Print the version number of svc",
@@ -547,6 +604,6 @@ func main() {
 		Use:   "svc",
 		Short: "ECS Service Utility v" + version,
 	}
-	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdVersion)
+	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdInfoCron, cmdVersion)
 	rootCmd.Execute()
 }
