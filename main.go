@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/applicationautoscaling"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/aws/aws-sdk-go/service/eventbridge"
-	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/spf13/cobra"
 )
 
@@ -109,12 +109,12 @@ func formatStringPointerSlice(strSlice []*string) string {
 }
 
 func getUserName(sess *session.Session) (string, error) {
-	svc := iam.New(sess)
-	result, err := svc.GetUser(&iam.GetUserInput{})
+	svc := sts.New(sess)
+	result, err := svc.GetCallerIdentity(&sts.GetCallerIdentityInput{})
 	if err != nil {
 		return "", err
 	}
-	return *result.User.UserName, nil
+	return parseName(*result.Arn), nil
 }
 
 func main() {
