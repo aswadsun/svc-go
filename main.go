@@ -591,9 +591,124 @@ func main() {
 		},
 	}
 
+	var cmdSetCron = &cobra.Command{
+		Use:   "set-cron [cron_name]",
+		Short: "Set cron enable/disable or update the schedule expression",
+		Long: `Set cron enable/disable or update the schedule expression
+Examples:
+   svc set-cron cron_name --enable
+   svc set-cron cron_name --disable
+   svc set-cron cron_name --schedule "rate(15 minutes)"
+   svc set-cron cron_name --schedule "cron(0 1 * * ? *)"
+   svc set-cron cron_name --enable --schedule "cron(0 2 * * ? *)"
+   svc set-cron cron_name --disable --schedule "cron(0 3 * * ? *)"
+
+Reference:
+   https://docs.aws.amazon.com/AmazonCloudWatch/latest/events/ScheduledEvents.html`,
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			schedule, _ := cmd.Flags().GetString("schedule")
+			enable, _ := cmd.Flags().GetBool("enable")
+			disable, _ := cmd.Flags().GetBool("disable")
+
+			if schedule == "" && !enable && !disable {
+				cmd.Help()
+			} else if enable && disable {
+				fmt.Println("Cannot --enable and --disable at the same time")
+				fmt.Println()
+			} else {
+
+				eb := eventbridge.New(sess)
+
+				result, err := eb.DescribeRule(
+					&eventbridge.DescribeRuleInput{
+						Name: aws.String(args[0]),
+					},
+				)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+
+				if enable {
+
+					if *result.State == "ENABLED" {
+						fmt.Printf("Cron/Scheduled Task: %s is already in ENABLED state!\n", *result.Name)
+					} else {
+						_, errEnable := eb.EnableRule(
+							&eventbridge.EnableRuleInput{
+								EventBusName: result.EventBusName,
+								Name:         result.Name,
+							},
+						)
+						if errEnable != nil {
+							fmt.Println(errEnable)
+							os.Exit(1)
+						}
+						fmt.Printf("Successfully ENABLED %s...\n", *result.Name)
+						*result.State = "ENABLED"
+					}
+
+				} else if disable {
+
+					if *result.State == "DISABLED" {
+						fmt.Printf("Cron/Scheduled Task: %s is already in DISABLED state!\n", *result.Name)
+					} else {
+						_, errDisable := eb.DisableRule(
+							&eventbridge.DisableRuleInput{
+								EventBusName: result.EventBusName,
+								Name:         result.Name,
+							},
+						)
+						if errDisable != nil {
+							fmt.Println(errDisable)
+							os.Exit(1)
+						}
+						fmt.Printf("Successfully DISABLED %s...\n", *result.Name)
+						*result.State = "DISABLED"
+					}
+
+				}
+
+				if schedule != "" {
+					if result.EventPattern != nil {
+						fmt.Println("Cannot set schedule expression of cron/scheduled task with EventPattern!")
+						fmt.Println()
+					} else {
+						if schedule == *result.ScheduleExpression {
+							fmt.Printf("ScheduleExpression of cron/scheduled task: %s, is already \"%s\", no need to update!\n", *result.Name, *result.ScheduleExpression)
+						} else {
+							_, errRule := eb.PutRule(
+								&eventbridge.PutRuleInput{
+									Name:               result.Name,
+									Description:        result.Description,
+									EventBusName:       result.EventBusName,
+									State:              result.State,
+									RoleArn:            result.RoleArn,
+									ScheduleExpression: aws.String(schedule),
+								},
+							)
+							if errRule != nil {
+								fmt.Println(errRule)
+								os.Exit(1)
+							}
+							fmt.Printf("Successfully set schedule expression of cron/scheduled task: %s, to \"%s\"...\n", *result.Name, schedule)
+						}
+						if *result.State == "DISABLED" {
+							fmt.Println("Warning, the cron/scheduled task state is DISABLED! It will not run on specified schedule unless it is ENABLED.")
+						}
+					}
+				}
+
+				fmt.Println()
+			}
+
+		},
+	}
+
 	var cmdVersion = &cobra.Command{
 		Use:   "version",
-		Short: "Print the version number of svc",
+		Short: "Print the version number",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Println(version)
@@ -601,9 +716,14 @@ func main() {
 	}
 
 	var rootCmd = &cobra.Command{
-		Use:   "svc",
-		Short: "ECS Service Utility v" + version,
+		Use:     "svc",
+		Version: version,
+		Short:   "ECS Service Utility v" + version,
 	}
-	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdInfoCron, cmdVersion)
+
+	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdInfoCron, cmdSetCron, cmdVersion)
+	cmdSetCron.Flags().BoolP("enable", "e", false, "Enable cron")
+	cmdSetCron.Flags().BoolP("disable", "d", false, "Disable cron")
+	cmdSetCron.Flags().StringP("schedule", "s", "", "Cron Schedule Expression")
 	rootCmd.Execute()
 }
