@@ -706,6 +706,90 @@ Reference:
 		},
 	}
 
+	var cmdRunCron = &cobra.Command{
+		Use:   "run-cron [cron_name]",
+		Short: "Run ECS task(s) using task definition from cron/scheduled task target(s)",
+		Long: `Run ECS task(s) using task definition from cron/scheduled task target(s).
+Only run ECS target with valid task definition. Other target such as Lambda function will not be invoked.`,
+		Args: cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			eb := eventbridge.New(sess)
+
+			resultRule, errRule := eb.DescribeRule(
+				&eventbridge.DescribeRuleInput{
+					Name: aws.String(args[0]),
+				},
+			)
+			if errRule != nil {
+				fmt.Println(errRule)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Run ECS task(s) using task definition from cron/scheduled task target(s)\n")
+			fmt.Printf("Cron/Scheduled Task Name: %s\n", *resultRule.Name)
+
+			resultTarget, errTarget := eb.ListTargetsByRule(
+				&eventbridge.ListTargetsByRuleInput{
+					EventBusName: resultRule.EventBusName,
+					Limit:        aws.Int64(100),
+					Rule:         resultRule.Name,
+				},
+			)
+			if errTarget != nil {
+				fmt.Println(errTarget)
+				os.Exit(1)
+			}
+
+			fmt.Printf("---\n")
+
+			user, errUser := getUserName(sess)
+			if errUser != nil {
+				panic(errUser)
+			}
+
+			var result *ecs.RunTaskOutput
+			var err error
+			var netCfg *ecs.NetworkConfiguration
+
+			for _, target := range resultTarget.Targets {
+				if target.EcsParameters != nil {
+					fmt.Printf("- Cluster:         %s\n", parseName(*target.Arn))
+					fmt.Printf("  Task Definition: %s\n", parseName(*target.EcsParameters.TaskDefinitionArn))
+
+					netCfg = &ecs.NetworkConfiguration{
+						AwsvpcConfiguration: &ecs.AwsVpcConfiguration{
+							AssignPublicIp: target.EcsParameters.NetworkConfiguration.AwsvpcConfiguration.AssignPublicIp,
+							SecurityGroups: target.EcsParameters.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups,
+							Subnets:        target.EcsParameters.NetworkConfiguration.AwsvpcConfiguration.Subnets,
+						},
+					}
+
+					result, err = svc.RunTask(
+						&ecs.RunTaskInput{
+							Cluster:              target.Arn,
+							LaunchType:           target.EcsParameters.LaunchType,
+							NetworkConfiguration: netCfg,
+							StartedBy:            aws.String("manual/" + user),
+							TaskDefinition:       target.EcsParameters.TaskDefinitionArn,
+						},
+					)
+					if err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+
+					if len(result.Failures) > 0 {
+						fmt.Println(result.Failures)
+						os.Exit(1)
+					}
+
+					fmt.Printf("  Successfully submitted command to manually run task: %s\n\n", parseName(*result.Tasks[0].TaskArn))
+
+				}
+			}
+		},
+	}
+
 	var cmdVersion = &cobra.Command{
 		Use:   "version",
 		Short: "Print the version number",
@@ -721,7 +805,7 @@ Reference:
 		Short:   "ECS Service Utility v" + version,
 	}
 
-	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdInfoCron, cmdSetCron, cmdVersion)
+	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdInfoCron, cmdSetCron, cmdRunCron, cmdVersion)
 	cmdSetCron.Flags().BoolP("enable", "e", false, "Enable cron")
 	cmdSetCron.Flags().BoolP("disable", "d", false, "Disable cron")
 	cmdSetCron.Flags().StringP("schedule", "s", "", "Cron Schedule Expression")
