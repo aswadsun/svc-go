@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.0.3"
+const version = "0.1.3"
 
 func parseName(arn string) string {
 	re := regexp.MustCompile(`(?:.+\/)(.+$)`)
@@ -790,6 +790,102 @@ Only run ECS target with valid task definition. Other target such as Lambda func
 		},
 	}
 
+	var cmdStatusCron = &cobra.Command{
+		Use:   "status-cron [cron_name]",
+		Short: "Show status of tasks which run by cron/scheduled task",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			eb := eventbridge.New(sess)
+
+			resultRule, errRule := eb.DescribeRule(
+				&eventbridge.DescribeRuleInput{
+					Name: aws.String(args[0]),
+				},
+			)
+			if errRule != nil {
+				fmt.Println(errRule)
+				os.Exit(1)
+			}
+
+			fmt.Printf("Cron/Scheduled Task Name: %s\n", *resultRule.Name)
+
+			resultTarget, errTarget := eb.ListTargetsByRule(
+				&eventbridge.ListTargetsByRuleInput{
+					EventBusName: resultRule.EventBusName,
+					Limit:        aws.Int64(100),
+					Rule:         resultRule.Name,
+				},
+			)
+			if errTarget != nil {
+				fmt.Println(errTarget)
+				os.Exit(1)
+			}
+
+			fmt.Printf("---\n")
+
+			for _, target := range resultTarget.Targets {
+				if target.EcsParameters != nil {
+
+					result, err := svc.ListTasks(
+						&ecs.ListTasksInput{
+							Cluster:    target.Arn,
+							MaxResults: aws.Int64(100),
+							Family:     aws.String(getTaskDefFamily(*target.EcsParameters.TaskDefinitionArn)),
+						},
+					)
+					if err != nil {
+						fmt.Println(err)
+						os.Exit(1)
+					}
+
+					fmt.Printf("- Cluster:         %s\n", parseName(*target.Arn))
+					fmt.Printf("  Task Definition: %s\n", parseName(*target.EcsParameters.TaskDefinitionArn))
+
+					nTask := len(result.TaskArns)
+					fmt.Printf("  Task(s): %d\n", nTask)
+
+					if nTask > 0 {
+						fmt.Println("  ---")
+
+						resultTasks, errTask := svc.DescribeTasks(
+							&ecs.DescribeTasksInput{
+								Cluster: target.Arn,
+								Tasks:   result.TaskArns,
+							},
+						)
+						if errTask != nil {
+							fmt.Println(errTask)
+							os.Exit(1)
+						}
+
+						for _, task := range resultTasks.Tasks {
+							fmt.Printf("  - Task Id:        %s\n", parseName(*task.TaskArn))
+							fmt.Printf("    TaskDefinition: %s\n", parseName(*task.TaskDefinitionArn))
+							fmt.Printf("    StartedBy:      %s\n", *task.StartedBy)
+							if *task.LastStatus == "RUNNING" {
+								// only print StartedAt if state is running to prevent panic of nil time
+								fmt.Printf("    StartedAt:      %v\n", *task.StartedAt)
+							}
+							fmt.Printf("    LastStatus:     %s\n", *task.LastStatus)
+
+							for idx, ovr := range task.Overrides.ContainerOverrides {
+								if len(ovr.Command) > 0 {
+									if idx == 0 {
+										fmt.Printf("    Overrides:\n")
+									}
+									fmt.Printf("    - Container Name: %s\n", *ovr.Name)
+									fmt.Printf("      Command:        %s\n", formatStringPointerSlice(ovr.Command))
+								}
+							}
+							fmt.Println()
+						}
+					}
+
+				}
+			}
+		},
+	}
+
 	var cmdVersion = &cobra.Command{
 		Use:   "version",
 		Short: "Print the version number",
@@ -805,7 +901,8 @@ Only run ECS target with valid task definition. Other target such as Lambda func
 		Short:   "ECS Service Utility v" + version,
 	}
 
-	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdRunTask, cmdStopTask, cmdListCrons, cmdInfoCron, cmdSetCron, cmdRunCron, cmdVersion)
+	rootCmd.AddCommand(cmdList, cmdListCluster, cmdRestart, cmdStart, cmdStatus, cmdStop, cmdInfo, cmdVersion)
+	rootCmd.AddCommand(cmdRunTask, cmdStopTask, cmdListCrons, cmdInfoCron, cmdSetCron, cmdRunCron, cmdStatusCron)
 	cmdSetCron.Flags().BoolP("enable", "e", false, "Enable cron")
 	cmdSetCron.Flags().BoolP("disable", "d", false, "Disable cron")
 	cmdSetCron.Flags().StringP("schedule", "s", "", "Cron Schedule Expression")
