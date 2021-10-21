@@ -130,6 +130,9 @@ func main() {
 		Short: "List available ECS services in a cluster",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
+
+			var services []*string
+
 			result, err := svc.ListServices(
 				&ecs.ListServicesInput{
 					Cluster:    aws.String(args[0]),
@@ -141,15 +144,32 @@ func main() {
 				os.Exit(1)
 			}
 
+			services = append(services, result.ServiceArns...)
+
+			for result.NextToken != nil {
+				result, err = svc.ListServices(
+					&ecs.ListServicesInput{
+						NextToken:  result.NextToken,
+						Cluster:    aws.String(args[0]),
+						MaxResults: aws.Int64(100),
+					},
+				)
+				if err != nil {
+					fmt.Println(err)
+					os.Exit(1)
+				}
+				services = append(services, result.ServiceArns...)
+			}
+
 			fmt.Println("Cluster:    " + args[0])
 
-			nSvc := len(result.ServiceArns)
+			nSvc := len(services)
 			fmt.Printf("Service(s): %d\n", nSvc)
 
 			if nSvc > 0 {
 				fmt.Println("---")
 
-				for _, svc := range result.ServiceArns {
+				for _, svc := range services {
 					fmt.Printf("  %s\n", parseName(*svc))
 				}
 			}
@@ -333,7 +353,7 @@ func main() {
 
 	var cmdInfo = &cobra.Command{
 		Use:   "info [cluster_name] [service_name]",
-		Short: "Show info of ECS Service",
+		Short: "Show information of ECS Service",
 		Args:  cobra.MinimumNArgs(2),
 		Run: func(cmd *cobra.Command, args []string) {
 			resultSvc, errSvc := getServiceDescription(svc, args[0], args[1])
